@@ -22,6 +22,10 @@ import com.pravera.flutter_foreground_task.PreferencesKey as PrefsKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
  * A service class for implementing foreground service.
@@ -93,6 +97,10 @@ class ForegroundService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
 
     private var isTimeout: Boolean = false
+
+    // A coroutine scope for background tasks.
+    private val serviceJob = Job()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
 
     // A broadcast receiver that handles intents that occur in the foreground service.
     private var broadcastReceiver = object : BroadcastReceiver() {
@@ -194,25 +202,29 @@ class ForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
-        val isTimeout = this.isTimeout
-        destroyForegroundTask(isTimeout)
+        // Cancel all coroutines started by this service.
+        serviceJob.cancel()
+
+        // Launch a new coroutine on a background thread to perform the slow cleanup.
+        serviceScope.launch {
+            destroyForegroundTask(isTimeout)
+        }
+
+        // Perform all fast, non-blocking cleanup immediately on the main thread.
         stopForegroundService()
         unregisterBroadcastReceiver()
 
-        var isCorrectlyStopped = false
-        if (::foregroundServiceStatus.isInitialized) {
-            isCorrectlyStopped = foregroundServiceStatus.isCorrectlyStopped()
-        }
-
-        // Safely handle auto-restart by checking if options are initialized.
+        // Check for restart conditions, which is also fast.
         if (::foregroundTaskOptions.isInitialized) {
+            val isCorrectlyStopped = foregroundServiceStatus.isCorrectlyStopped()
             val allowAutoRestart = foregroundTaskOptions.allowAutoRestart
             if (allowAutoRestart && !isCorrectlyStopped && !ForegroundServiceUtils.isSetStopWithTaskFlag(this)) {
-                Log.e(TAG, "The service will be restarted after 5 seconds because it wasn't properly stopped.")
+                Log.d(TAG, "The service will be restarted after 5 seconds because it wasn't properly stopped.")
                 RestartReceiver.setRestartAlarm(this, 5000)
             }
         }
+
+        super.onDestroy()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
