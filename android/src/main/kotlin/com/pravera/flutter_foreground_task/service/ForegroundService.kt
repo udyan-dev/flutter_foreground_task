@@ -108,17 +108,21 @@ class ForegroundService : Service() {
             if (intent == null) return
 
             try {
-                // This intent has not sent from the current package.
-                val iPackageName = intent.`package`
-                val cPackageName = packageName
-                if (iPackageName != cPackageName) {
-                    Log.d(TAG, "This intent has not sent from the current package. ($iPackageName != $cPackageName)")
-                    return
-                }
-
                 val action = intent.action ?: return
                 val data = intent.getStringExtra(INTENT_DATA_NAME)
-                task?.invokeMethod(action, data)
+
+                if (data == "stop_service") {
+                    // Active Shutdown: Take immediate and direct action.
+                    RestartReceiver.cancelRestartAlarm(applicationContext)
+                    stopForeground(true)
+                    stopSelf()
+                    ForegroundServiceStatus.setData(
+                        applicationContext,
+                        ForegroundServiceAction.API_STOP
+                    )
+                } else {
+                    task?.invokeMethod(action, data)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, e.message, e)
             }
